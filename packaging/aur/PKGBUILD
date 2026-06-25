@@ -12,7 +12,7 @@ makedepends=('just')
 backup=('etc/tpfan-curvy.conf')
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('069d2a11d7b93b58451f0b03cb52f568529d4363161ef2922235c0780b12e79a')
 
 build() {
   cd "$srcdir/curvy-tpfan-$pkgver"
