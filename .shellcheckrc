@@ -1,0 +1,11 @@
+# curvy-tpfan — shellcheck configuration.
+# The project shell is bash (see the shebang). Opt into a few stricter checks.
+enable=add-default-case
+enable=deprecate-which
+enable=quote-safe-variables
+
+# Follow `source` directives (so the test that sources the daemon is understood
+# rather than flagged SC1091 / false-positive SC2034). Paths resolve relative to
+# each script's own directory.
+external-sources=true
+source-path=SCRIPTDIR

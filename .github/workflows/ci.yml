@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install just, shfmt, shellcheck
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,shfmt,shellcheck
+      - name: Run checks
+        run: just ci

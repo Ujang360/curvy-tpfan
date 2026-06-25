@@ -1,0 +1,10 @@
+# editor / formatter scratch
+*.orig
+*.bak
+*~
+
+# build / dist artifacts
+/dist/
+/pkg/
+/src-pkg/
+*.pkg.tar.*

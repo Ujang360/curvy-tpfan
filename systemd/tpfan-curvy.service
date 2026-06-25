@@ -1,0 +1,37 @@
+[Unit]
+Description=curvy-tpfan — ThinkPad fan curve bound to the active power profile
+Documentation=https://github.com/Ujang360/curvy-tpfan
+# Intentionally NO After=/Wants=power-profiles-daemon.service: the daemon reads
+# the kernel platform_profile (or polls ppd defensively), and ppd is ordered
+# against multi-user.target. Adding a dependency here forms a startup ordering
+# cycle and systemd silently drops this unit's start job.
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=15
+ExecStart=/usr/bin/tpfan-curvy
+Restart=always
+RestartSec=2
+# Fail safe: hand the fan back to the EC's automatic control however we stop
+# (clean exit, crash, kill, or watchdog timeout). Resolves the thinkpad hwmon
+# by name because the index is not stable across boots.
+ExecStopPost=/usr/bin/bash -c 'for h in /sys/class/hwmon/hwmon*; do [ "$(cat "$h/name" 2>/dev/null)" = thinkpad ] && echo 2 > "$h/pwm1_enable"; done'
+
+# --- hardening (ProtectSystem=strict leaves /sys writable, which we need) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

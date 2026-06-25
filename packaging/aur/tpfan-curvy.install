@@ -1,0 +1,21 @@
+post_install() {
+  cat <<'EOF'
+==> curvy-tpfan installed (service NOT enabled — by design).
+    1) Reboot to load 'thinkpad_acpi fan_control=1'.
+    2) Run:    tpfan-curvy --check     (confirm sensors + curve; writes nothing)
+    3) Enable: systemctl enable --now tpfan-curvy
+    Config:    /etc/tpfan-curvy.conf
+    Docs:      /usr/share/doc/tpfan-curvy/README.md
+    Safety:    https://github.com/Ujang360/curvy-tpfan/blob/main/docs/SAFETY.md
+EOF
+}
+
+post_upgrade() {
+  echo "==> curvy-tpfan upgraded. If you edited /etc/tpfan-curvy.conf, reconcile the .pacnew."
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+post_remove() {
+  echo "==> curvy-tpfan removed. The fan returns to EC control on next stop/reboot;"
+  echo "    reboot to drop the thinkpad_acpi fan_control=1 modprobe option."
+}

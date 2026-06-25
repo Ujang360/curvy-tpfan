@@ -1,0 +1,38 @@
+name: Model support report
+description: Tell us curvy-tpfan works (or doesn't) on your ThinkPad
+labels: [model-support]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model + machine type
+      placeholder: e.g. T14 Gen 3 AMD (21CF0048GE)
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Working
+        - Partially working
+        - Not working
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: tpfan-curvy --check output
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: choices
+    attributes:
+      label: platform_profile choices
+      description: "cat /sys/firmware/acpi/platform_profile_choices (leave blank if absent)"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything unusual — extra profile names, missing sensors, tweaks you needed.

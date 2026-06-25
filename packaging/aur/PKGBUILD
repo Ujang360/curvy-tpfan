@@ -1,0 +1,27 @@
+# Maintainer: Aditya Kresna <aditya.kresna@outlook.co.id>
+pkgname=tpfan-curvy
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="ThinkPad fan curve bound to the active power profile (per-mode bands + disengage safety)"
+arch=('any')
+url="https://github.com/Ujang360/curvy-tpfan"
+license=('MIT')
+depends=('bash' 'systemd')
+optdepends=('power-profiles-daemon: MODE_SOURCE=ppd fallback for pre-DYTC ThinkPads')
+makedepends=('just')
+backup=('etc/tpfan-curvy.conf')
+install="$pkgname.install"
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/curvy-tpfan-$pkgver"
+  just ci
+}
+
+package() {
+  cd "$srcdir/curvy-tpfan-$pkgver"
+  just prefix=/usr destdir="$pkgdir" install-files
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm0644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

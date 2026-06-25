@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+#
+# tpfan-curvy — ThinkPad fan curve bound to the active power profile.
+# Part of curvy-tpfan — https://github.com/Ujang360/curvy-tpfan
+# SPDX-License-Identifier: MIT
+#
+# Drives the single thinkpad_acpi fan (pwm1; EC levels 0-7 + disengage) with a
+# per-power-mode temperature curve, directional hysteresis, and a hard thermal
+# override. The power mode comes from the kernel ACPI platform_profile (or, on
+# older ThinkPads, power-profiles-daemon).
+#
+# FAILS SAFE: every exit path — fatal error, invalid config, signal, crash —
+# hands the fan back to the EC's automatic control (pwm1_enable=2). Pair with
+# the systemd unit (Type=notify watchdog + Restart=always) so a hang is killed
+# and restarted rather than leaving the fan stuck under manual control.
+#
+# NOTE: deliberately NOT `set -e`. A long-running control loop must not exit on
+# the first nonzero status (bash arithmetic `(( x ))` returns 1 when the value
+# is 0, which would kill the daemon spuriously). Fatal conditions call die();
+# hardware writes are guarded explicitly.
+
+set -uo pipefail
+
+readonly PROG=tpfan-curvy
+readonly VERSION=0.1.0
+readonly DEFAULT_CONFIG=/etc/tpfan-curvy.conf
+readonly PPROF=/sys/firmware/acpi/platform_profile
+readonly PPROF_CHOICES=/sys/firmware/acpi/platform_profile_choices
+
+# ---- tunables: a PRESET fills crit/span/hysteresis; the config file overrides ----
+PRESET=normal
+POLL=2
+MODE_SOURCE=platform_profile # platform_profile | ppd
+CRIT=
+CRIT_HYST=
+TEMP_LO=
+TEMP_HI=
+HYST=
+
+# Per-power-mode EC level band "MIN MAX" (levels 0..7), keyed by the mode token.
+# Keys cover both platform_profile (low-power) and ppd (power-saver) names. The
+# config file may override or add entries: BAND[performance]="6 7".
+# NB: keys are quoted so shfmt does not parse the '-' as arithmetic and corrupt
+# the subscript (e.g. [low-power] -> [low - power]). Do not unquote.
+declare -A BAND=(
+  ["performance"]="7 7"
+  ["balanced"]="2 7"
+  ["low-power"]="0 2"   # platform_profile battery mode
+  ["power-saver"]="0 2" # power-profiles-daemon battery mode
+)
+
+log() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+die() {
+  log "FATAL: $*"
+  exit 1
+}
+is_uint() { [[ $1 =~ ^[0-9]+$ ]]; }
+
+# ----------------------------- configuration ------------------------------
+load_config() {
+  local cfg=${TPFAN_CONFIG:-$DEFAULT_CONFIG}
+  if [[ -r $cfg ]]; then
+    # shellcheck source=/dev/null
+    source "$cfg" || die "failed to source config: $cfg"
+  else
+    log "no config at $cfg — using built-in defaults"
+  fi
+  apply_preset "$PRESET"
+  validate_config
+}
+
+apply_preset() {
+  # `:=` means a value already set by the config file wins; the preset only
+  # fills what the user left blank.
+  case $1 in
+    quiet) : "${CRIT:=92}" "${CRIT_HYST:=5}" "${TEMP_LO:=55}" "${TEMP_HI:=88}" "${HYST:=6}" ;;
+    normal) : "${CRIT:=90}" "${CRIT_HYST:=5}" "${TEMP_LO:=48}" "${TEMP_HI:=82}" "${HYST:=5}" ;;
+    aggressive) : "${CRIT:=85}" "${CRIT_HYST:=5}" "${TEMP_LO:=40}" "${TEMP_HI:=75}" "${HYST:=4}" ;;
+    *) die "unknown PRESET '$1' (want: quiet|normal|aggressive)" ;;
+  esac
+  : "${POLL:=2}"
+}
+
+validate_config() {
+  local v
+  for v in POLL CRIT CRIT_HYST TEMP_LO TEMP_HI HYST; do
+    is_uint "${!v}" || die "config: $v must be a non-negative integer (got '${!v}')"
+  done
+  ((POLL >= 1)) || die "config: POLL must be >= 1"
+  ((TEMP_LO < TEMP_HI)) || die "config: TEMP_LO ($TEMP_LO) must be < TEMP_HI ($TEMP_HI)"
+  ((CRIT > TEMP_HI)) || die "config: CRIT ($CRIT) must be > TEMP_HI ($TEMP_HI)"
+  ((CRIT_HYST >= 1 && CRIT_HYST < CRIT)) || die "config: CRIT_HYST ($CRIT_HYST) out of range"
+  case $MODE_SOURCE in
+    platform_profile | ppd) ;;
+    *) die "config: MODE_SOURCE must be platform_profile|ppd (got '$MODE_SOURCE')" ;;
+  esac
+
+  # Validate every band the config exposes.
+  local key min max
+  for key in "${!BAND[@]}"; do
+    read -r min max <<<"${BAND[$key]}"
+    if ! is_uint "${min:-}" || ! is_uint "${max:-}"; then
+      die "config: BAND[$key] must be 'MIN MAX' integers (got '${BAND[$key]}')"
+    fi
+    ((min >= 0 && max <= 7 && min <= max)) || die "config: BAND[$key] out of range (need 0<=MIN<=MAX<=7)"
+  done
+}
+
+# ------------------------------- hardware ---------------------------------
+find_hwmon() { # $1=name -> echo path; return 1 if absent
+  local h n
+  for h in /sys/class/hwmon/hwmon*; do
+    [[ -r $h/name ]] || continue
+    read -r n <"$h/name" || continue
+    if [[ $n == "$1" ]]; then
+      printf '%s\n' "$h"
+      return 0
+    fi
+  done
+  return 1
+}
+
+TP=
+PWM=
+PWME=
+declare -a TEMP_FILES=()
+
+resolve_hw() {
+  TP=$(find_hwmon thinkpad) || die "thinkpad_acpi hwmon not found — is the module loaded?"
+  PWM=$TP/pwm1
+  PWME=$TP/pwm1_enable
+  [[ -e $PWM && -e $PWME ]] || die "$TP exposes no pwm1 (unexpected for thinkpad_acpi)"
+
+  # Temperature sources, vendor-agnostic: the thinkpad EC's own sensors first
+  # (present on every ThinkPad, Intel or AMD), then coretemp (Intel) and/or
+  # k10temp (AMD) as supplements. Hottest across all wins.
+  local f h p
+  for f in "$TP"/temp*_input; do [[ -r $f ]] && TEMP_FILES+=("$f"); done
+  for h in coretemp k10temp; do
+    if p=$(find_hwmon "$h"); then
+      for f in "$p"/temp*_input; do [[ -r $f ]] && TEMP_FILES+=("$f"); done
+    fi
+  done
+  ((${#TEMP_FILES[@]} > 0)) || die "no readable temperature sensors found"
+}
+
+read_temp() { # echo hottest °C across all sources
+  local max=0 v f
+  for f in "${TEMP_FILES[@]}"; do
+    [[ -r $f ]] || continue
+    read -r v <"$f" 2>/dev/null || continue # skip N/A sensors (ENXIO)
+    is_uint "$v" || continue
+    v=$((v / 1000))
+    ((v > max)) && max=$v
+  done
+  printf '%d\n' "$max"
+}
+
+read_mode() { # echo current power-mode token
+  local m=
+  if [[ $MODE_SOURCE == platform_profile ]]; then
+    [[ -r $PPROF ]] && read -r m <"$PPROF"
+  elif command -v powerprofilesctl >/dev/null 2>&1; then
+    m=$(powerprofilesctl get 2>/dev/null)
+  fi
+  printf '%s\n' "${m:-balanced}"
+}
+
+band_for() { # $1=mode -> echo "MIN MAX"; unknown mode falls back to balanced band
+  printf '%s\n' "${BAND[$1]:-${BAND[balanced]}}"
+}
+
+curve() { # $1=temp $2=min $3=max -> echo EC level; linear over [TEMP_LO,TEMP_HI]
+  local t=$1 lo=$2 hi=$3 span lvl
+  ((hi <= lo)) && {
+    printf '%d\n' "$lo"
+    return
+  }
+  ((t <= TEMP_LO)) && {
+    printf '%d\n' "$lo"
+    return
+  }
+  ((t >= TEMP_HI)) && {
+    printf '%d\n' "$hi"
+    return
+  }
+  span=$((TEMP_HI - TEMP_LO))
+  lvl=$((((t - TEMP_LO) * (hi - lo) * 10 / span + 5) / 10 + lo))
+  printf '%d\n' "$lvl"
+}
+
+level_to_pwm() { # EC level 0..7 -> pwm 0..255, rounded to the nearest step
+  local pwm=$((($1 * 255 + 3) / 7))
+  ((pwm > 255)) && pwm=255
+  printf '%d\n' "$pwm"
+}
+
+engage() { # $1=level -> manual control at that level
+  local pwm
+  pwm=$(level_to_pwm "$1")
+  printf '1\n' >"$PWME" 2>/dev/null || {
+    log "warn: cannot set manual mode on $PWME"
+    return 1
+  }
+  printf '%d\n' "$pwm" >"$PWM" 2>/dev/null || {
+    log "warn: cannot write pwm=$pwm to $PWM"
+    return 1
+  }
+}
+disengage() { printf '0\n' >"$PWME" 2>/dev/null || log "warn: cannot disengage $PWME"; }
+restore() { printf '2\n' >"$PWME" 2>/dev/null || true; }
+
+# ------------------------------- self-test --------------------------------
+selftest() {
+  resolve_hw
+  printf '%s %s — self-test (no hardware writes)\n\n' "$PROG" "$VERSION"
+  printf 'config         : %s\n' "${TPFAN_CONFIG:-$DEFAULT_CONFIG}"
+  printf 'preset=%s poll=%ss crit=%s°C crit_hyst=%s span=%s-%s°C hyst=%s\n' \
+    "$PRESET" "$POLL" "$CRIT" "$CRIT_HYST" "$TEMP_LO" "$TEMP_HI" "$HYST"
+  printf 'mode source    : %s\n' "$MODE_SOURCE"
+  printf 'thinkpad hwmon : %s\n' "$TP"
+  printf 'temp sources   : %s\n' "${TEMP_FILES[*]}"
+  printf 'current temp   : %s°C\n' "$(read_temp)"
+  printf 'current mode   : %s\n' "$(read_mode)"
+  [[ -r $PPROF_CHOICES ]] && printf 'profile choices: %s\n' "$(<"$PPROF_CHOICES")"
+  printf '\ncurve — EC level at temperature, per power mode (DIS = disengage/full):\n'
+  local mode min max t line
+  for mode in performance balanced low-power; do
+    read -r min max <<<"$(band_for "$mode")"
+    line=$(printf '  %-12s band[%s-%s]:' "$mode" "$min" "$max")
+    for t in 30 40 50 60 70 80 "$CRIT"; do
+      if ((t >= CRIT)); then line+=" ${t}=DIS"; else line+=" ${t}=$(curve "$t" "$min" "$max")"; fi
+    done
+    printf '%s\n' "$line"
+  done
+  printf '\nlevel->pwm: 0=0 1=36 2=73 3=109 4=146 5=182 6=219 7=255  (EC ~14%%/step)\n'
+}
+
+# ------------------------------- main loop --------------------------------
+main_loop() {
+  resolve_hw
+  [[ -w $PWME ]] || die "$PWME not writable — set 'options thinkpad_acpi fan_control=1' (modprobe.d) and reboot"
+
+  trap 'restore' EXIT
+  trap 'restore; exit 0' INT TERM
+  command -v systemd-notify >/dev/null 2>&1 && systemd-notify READY=1 2>/dev/null || true
+  log "started: preset=$PRESET crit=${CRIT}°C span=${TEMP_LO}-${TEMP_HI}°C source=$MODE_SOURCE"
+
+  local cur=-1 state=engaged mode mode_prev='' t min max up down
+  while :; do
+    command -v systemd-notify >/dev/null 2>&1 && systemd-notify WATCHDOG=1 2>/dev/null || true
+    mode=$(read_mode)
+    read -r min max <<<"$(band_for "$mode")"
+    t=$(read_temp)
+
+    # re-band immediately when the power mode changes
+    if [[ $mode != "$mode_prev" ]]; then
+      ((cur < min)) && cur=$min
+      ((cur > max)) && cur=$max
+      mode_prev=$mode
+    fi
+
+    # hard thermal override: disengage (full speed) above CRIT, any mode
+    if ((t >= CRIT)); then
+      if [[ $state != disengaged ]]; then
+        disengage
+        state=disengaged
+        cur=-1
+      fi
+      sleep "$POLL"
+      continue
+    fi
+    if [[ $state == disengaged ]] && ((t > CRIT - CRIT_HYST)); then
+      sleep "$POLL"
+      continue # hold disengage until below the recover point
+    fi
+    state=engaged
+
+    # directional hysteresis: ramp up immediately, step down only past deadband
+    up=$(curve "$t" "$min" "$max")
+    if ((cur < 0 || up > cur)); then
+      cur=$up
+    else
+      down=$(curve $((t - HYST)) "$min" "$max")
+      ((down < cur)) && cur=$down
+    fi
+    ((cur < min)) && cur=$min
+    ((cur > max)) && cur=$max
+    engage "$cur" || true
+    sleep "$POLL"
+  done
+}
+
+usage() {
+  cat <<EOF
+$PROG $VERSION — ThinkPad fan curve bound to the active power profile
+usage: $PROG [--check | --version | --help]
+  (no args)   run the daemon (root; needs thinkpad_acpi fan_control=1)
+  --check     print resolved sensors, config, and the curve table; writes nothing
+  --version   print version
+config file : ${TPFAN_CONFIG:-$DEFAULT_CONFIG}  (override path via TPFAN_CONFIG)
+EOF
+}
+
+main() {
+  case ${1:-} in
+    --check)
+      load_config
+      selftest
+      ;;
+    --version) printf '%s %s\n' "$PROG" "$VERSION" ;;
+    -h | --help) usage ;;
+    '')
+      load_config
+      main_loop
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Run only when executed directly; sourcing (e.g. tests) gets the functions only.
+if [[ ${BASH_SOURCE[0]} == "${0}" ]]; then
+  main "$@"
+fi

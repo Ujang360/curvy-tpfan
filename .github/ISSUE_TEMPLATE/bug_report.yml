@@ -1,0 +1,37 @@
+name: Bug report
+description: Something doesn't behave as expected
+labels: [bug]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: ThinkPad model + machine type
+      placeholder: e.g. T15p Gen 1 (20TMS0FL06)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: tpfan-curvy --check output
+      description: Full output of `tpfan-curvy --check` (writes nothing to hardware).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Service logs
+      description: "Output of: journalctl -u tpfan-curvy -b --no-pager"
+      render: text
+  - type: textarea
+    id: config
+    attributes:
+      label: /etc/tpfan-curvy.conf
+      description: Your config, if you changed it from the defaults.
+      render: ini
