@@ -41,6 +41,15 @@ assert "level_to_pwm 0" 0 "$(level_to_pwm 0)"
 assert "level_to_pwm 2" 73 "$(level_to_pwm 2)"
 assert "level_to_pwm 7" 255 "$(level_to_pwm 7)"
 
+# step_level: ramp up at once, leave a level only once HYST below its threshold
+# (balanced band across 40..75 °C: level 3 starts at 44 °C)
+HYST=4
+assert "step_level first sample takes the curve" 3 "$(step_level -1 45 2 7)"
+assert "step_level holds a level just above its threshold" 3 "$(step_level 3 45 2 7)"
+assert "step_level holds at threshold - HYST" 3 "$(step_level 3 40 2 7)"
+assert "step_level steps down below threshold - HYST" 2 "$(step_level 3 39 2 7)"
+assert "step_level ramps up immediately" 5 "$(step_level 3 60 2 7)"
+
 # band_for resolves known modes and falls back to balanced for unknown ones
 assert "band_for low-power" "0 2" "$(band_for low-power)"
 assert "band_for unknown -> balanced" "2 7" "$(band_for cool)"
@@ -49,4 +58,4 @@ if ((fail)); then
   printf '\nFAILED\n'
   exit 1
 fi
-printf '\nall %s curve checks passed\n' 14
+printf '\nall %s curve checks passed\n' 19

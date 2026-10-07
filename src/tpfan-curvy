@@ -189,6 +189,22 @@ curve() { # $1=temp $2=min $3=max -> echo EC level; linear over [TEMP_LO,TEMP_HI
   printf '%d\n' "$lvl"
 }
 
+step_level() { # $1=current level (-1 = none) $2=temp $3=min $4=max -> echo next EC level
+  # directional hysteresis: ramp up immediately; leave a level only once the
+  # temperature has fallen HYST below the threshold that entered it
+  local cur=$1 t=$2 lo=$3 hi=$4 up down
+  up=$(curve "$t" "$lo" "$hi")
+  if ((cur < 0 || up > cur)); then
+    cur=$up
+  else
+    down=$(curve $((t + HYST)) "$lo" "$hi")
+    ((down < cur)) && cur=$down
+  fi
+  ((cur < lo)) && cur=$lo
+  ((cur > hi)) && cur=$hi
+  printf '%d\n' "$cur"
+}
+
 level_to_pwm() { # EC level 0..7 -> pwm 0..255, rounded to the nearest step
   local pwm=$((($1 * 255 + 3) / 7))
   ((pwm > 255)) && pwm=255
@@ -246,7 +262,7 @@ main_loop() {
   command -v systemd-notify >/dev/null 2>&1 && systemd-notify READY=1 2>/dev/null || true
   log "started: preset=$PRESET crit=${CRIT}°C span=${TEMP_LO}-${TEMP_HI}°C source=$MODE_SOURCE"
 
-  local cur=-1 state=engaged mode mode_prev='' t min max up down
+  local cur=-1 state=engaged mode mode_prev='' t min max
   while :; do
     command -v systemd-notify >/dev/null 2>&1 && systemd-notify WATCHDOG=1 2>/dev/null || true
     mode=$(read_mode)
@@ -276,16 +292,7 @@ main_loop() {
     fi
     state=engaged
 
-    # directional hysteresis: ramp up immediately, step down only past deadband
-    up=$(curve "$t" "$min" "$max")
-    if ((cur < 0 || up > cur)); then
-      cur=$up
-    else
-      down=$(curve $((t - HYST)) "$min" "$max")
-      ((down < cur)) && cur=$down
-    fi
-    ((cur < min)) && cur=$min
-    ((cur > max)) && cur=$max
+    cur=$(step_level "$cur" "$t" "$min" "$max")
     engage "$cur" || true
     sleep "$POLL"
   done
