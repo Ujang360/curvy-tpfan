@@ -12,6 +12,6 @@ pkgbase = tpfan-curvy
 	optdepends = power-profiles-daemon: MODE_SOURCE=ppd fallback for pre-DYTC ThinkPads
 	backup = etc/tpfan-curvy.conf
 	source = tpfan-curvy-0.1.1.tar.gz::https://github.com/Ujang360/curvy-tpfan/archive/refs/tags/v0.1.1.tar.gz
-	sha256sums = SKIP
+	sha256sums = 7d1abc90583c132f99ad17d8f897c62572b888342f55d8b9f08f3717f308fb80
 
 pkgname = tpfan-curvy
