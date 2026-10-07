@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-07
+
 ### Fixed
 
 - Hysteresis: the fan now leaves a level only once the temperature has fallen
@@ -39,5 +41,6 @@ Initial release.
 - Hardened systemd unit, `just` task runner, unit tests for the curve math,
   and CI (shellcheck + shfmt + tests).
 
-[Unreleased]: https://github.com/Ujang360/curvy-tpfan/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Ujang360/curvy-tpfan/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Ujang360/curvy-tpfan/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Ujang360/curvy-tpfan/releases/tag/v0.1.0

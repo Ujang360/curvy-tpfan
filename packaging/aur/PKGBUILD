@@ -1,6 +1,6 @@
 # Maintainer: Aditya Kresna <aditya.kresna@outlook.co.id>
 pkgname=tpfan-curvy
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="ThinkPad fan curve bound to the active power profile (per-mode bands + disengage safety)"
 arch=('any')
@@ -12,7 +12,7 @@ makedepends=('just')
 backup=('etc/tpfan-curvy.conf')
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('069d2a11d7b93b58451f0b03cb52f568529d4363161ef2922235c0780b12e79a')
+sha256sums=('SKIP')
 
 build() {
   cd "$srcdir/curvy-tpfan-$pkgver"

@@ -1,6 +1,6 @@
 pkgbase = tpfan-curvy
 	pkgdesc = ThinkPad fan curve bound to the active power profile (per-mode bands + disengage safety)
-	pkgver = 0.1.0
+	pkgver = 0.1.1
 	pkgrel = 1
 	url = https://github.com/Ujang360/curvy-tpfan
 	install = tpfan-curvy.install
@@ -11,7 +11,7 @@ pkgbase = tpfan-curvy
 	depends = systemd
 	optdepends = power-profiles-daemon: MODE_SOURCE=ppd fallback for pre-DYTC ThinkPads
 	backup = etc/tpfan-curvy.conf
-	source = tpfan-curvy-0.1.0.tar.gz::https://github.com/Ujang360/curvy-tpfan/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = 069d2a11d7b93b58451f0b03cb52f568529d4363161ef2922235c0780b12e79a
+	source = tpfan-curvy-0.1.1.tar.gz::https://github.com/Ujang360/curvy-tpfan/archive/refs/tags/v0.1.1.tar.gz
+	sha256sums = SKIP
 
 pkgname = tpfan-curvy

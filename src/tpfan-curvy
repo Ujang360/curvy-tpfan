@@ -22,7 +22,7 @@
 set -uo pipefail
 
 readonly PROG=tpfan-curvy
-readonly VERSION=0.1.0
+readonly VERSION=0.1.1
 readonly DEFAULT_CONFIG=/etc/tpfan-curvy.conf
 readonly PPROF=/sys/firmware/acpi/platform_profile
 readonly PPROF_CHOICES=/sys/firmware/acpi/platform_profile_choices
