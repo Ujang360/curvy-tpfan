@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Hysteresis: the fan now leaves a level only once the temperature has fallen
+  `HYST` below that level's threshold, as documented. The down-step evaluated
+  the curve at `t - HYST`, so a temperature holding within `HYST` above a
+  threshold made the level flap every poll.
+
 ## [0.1.0] - 2026-06-26
 
 Initial release.
